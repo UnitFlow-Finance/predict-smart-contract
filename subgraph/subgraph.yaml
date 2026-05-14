@@ -1,0 +1,58 @@
+specVersion: 0.0.5
+schema:
+  file: ./schema.graphql
+
+dataSources:
+  - kind: ethereum
+    name: PredictMarketFactory
+    network: arc-testnet
+    source:
+      address: "0x0000000000000000000000000000000000000000"  # replace after deploy
+      abi: PredictMarketFactory
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - Market
+        - ProtocolStats
+      abis:
+        - name: PredictMarketFactory
+          file: ../artifacts/contracts/predict/PredictMarketFactory.sol/PredictMarketFactory.json
+        - name: PredictMarket
+          file: ../artifacts/contracts/predict/PredictMarket.sol/PredictMarket.json
+      eventHandlers:
+        - event: MarketCreated(indexed bytes32,indexed address,indexed address,string,address,uint256)
+          handler: handleMarketCreated
+      file: ./src/factory.ts
+
+templates:
+  - kind: ethereum
+    name: PredictMarket
+    network: arc-testnet
+    source:
+      abi: PredictMarket
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - Market
+        - Stake
+        - UserPosition
+        - UserStats
+        - ProtocolStats
+      abis:
+        - name: PredictMarket
+          file: ../artifacts/contracts/predict/PredictMarket.sol/PredictMarket.json
+      eventHandlers:
+        - event: LiquiditySeeded(uint256,uint256)
+          handler: handleLiquiditySeeded
+        - event: Staked(indexed address,bool,uint256,uint256,uint256,uint256,uint256)
+          handler: handleStaked
+        - event: Claimed(indexed address,uint256,uint256,uint256)
+          handler: handleClaimed
+        - event: MarketResolved(bool,indexed address)
+          handler: handleMarketResolved
+      file: ./src/market.ts

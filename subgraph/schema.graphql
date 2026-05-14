@@ -1,0 +1,76 @@
+type Market @entity {
+  id: Bytes!                      # bytes32 marketId
+  address: Bytes!                 # market contract address
+  question: String!
+  description: String!
+  category: String!
+  tags: [String!]!
+  currency: Bytes!                # USDC or EURC address
+  creator: Bytes!
+  resolutionDate: BigInt!
+  createdAt: BigInt!
+  resolver: Bytes!
+  oracleSource: String!
+
+  # AMM state (updated on every Staked event)
+  yesPool: BigInt!
+  noPool: BigInt!
+  totalStaked: BigInt!
+
+  # Odds as BigDecimal percentages (0.00–100.00), updated on every Staked event
+  yesOdds: BigDecimal!
+  noOdds: BigDecimal!
+
+  # Resolution
+  resolved: Boolean!
+  outcome: Boolean
+
+  # Participants
+  participantCount: BigInt!
+
+  # Derived relations
+  stakes: [Stake!]! @derivedFrom(field: "market")
+  positions: [UserPosition!]! @derivedFrom(field: "market")
+}
+
+type Stake @entity(immutable: true) {
+  id: Bytes!                      # txHash-logIndex
+  market: Market!
+  user: Bytes!
+  isYes: Boolean!
+  amount: BigInt!
+  sharesIssued: BigInt!
+  fee: BigInt!
+  timestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+type UserPosition @entity {
+  id: Bytes!                      # marketAddress-userAddress
+  market: Market!
+  user: Bytes!
+  yesShares: BigInt!
+  noShares: BigInt!
+  totalStaked: BigInt!
+  claimed: Boolean!
+  payout: BigInt!
+}
+
+type UserStats @entity {
+  id: Bytes!                      # userAddress
+  user: Bytes!
+  totalStaked: BigInt!
+  totalEarnings: BigInt!
+  marketsParticipated: BigInt!
+  wins: BigInt!
+  losses: BigInt!
+  winRate: BigDecimal!
+}
+
+type ProtocolStats @entity {
+  id: String!                     # "global"
+  totalVolume: BigInt!
+  totalMarkets: BigInt!
+  totalParticipants: BigInt!
+  totalFees: BigInt!
+}
