@@ -69,11 +69,16 @@ async function deployAll(): Promise<Suite> {
   const Router = await ethers.getContractFactory("MockUnitFlowRouter");
   const router = (await Router.deploy()) as MockUnitFlowRouter;
 
+  // Mock UNIT token (stand-in for the real UNIT token on Arc)
+  const UnitToken = await ethers.getContractFactory("MockERC20");
+  const unitToken = await UnitToken.deploy("Mock UNIT", "UNIT", 18);
+
   // FeeDistributor
   const fd = await deployProxy<FeeDistributor>("FeeDistributor", owner, [
     await router.getAddress(),
     treasury.address,
     lpPool.address,
+    await unitToken.getAddress(),
     owner.address,
   ]);
 
@@ -298,8 +303,8 @@ describe("FullFlow Integration", () => {
     expect(await s.fd.pendingFees(usdcAddr)).to.equal(0);
   });
 
-  it("buybackAndBurn was called on the router", async () => {
-    // Router received tokens during distributeFees — verify its balance is non-zero
+  it("router received buyback tokens (swap was executed)", async () => {
+    // Router holds the input tokens after the swap — verify its balance is non-zero
     const routerBal = await s.usdc.balanceOf(await s.router.getAddress());
     expect(routerBal).to.be.gt(0);
   });

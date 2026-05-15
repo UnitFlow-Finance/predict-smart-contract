@@ -38,6 +38,8 @@ contract FeeDistributor is
     address public unitRouter;
     address public treasury;
     address public lpRewardPool;
+    address public unitToken;
+    address public deadAddress;
 
     uint256 public buybackShare;  // default 6000
     uint256 public lpShare;       // default 2000
@@ -64,11 +66,13 @@ contract FeeDistributor is
         address _unitRouter,
         address _treasury,
         address _lpRewardPool,
+        address _unitToken,
         address _owner
     ) external initializer {
         require(_unitRouter   != address(0), "FeeDistributor: zero unitRouter");
         require(_treasury     != address(0), "FeeDistributor: zero treasury");
         require(_lpRewardPool != address(0), "FeeDistributor: zero lpRewardPool");
+        require(_unitToken    != address(0), "FeeDistributor: zero unitToken");
         require(_owner        != address(0), "FeeDistributor: zero owner");
 
         __Ownable_init(_owner);
@@ -76,6 +80,8 @@ contract FeeDistributor is
         unitRouter   = _unitRouter;
         treasury     = _treasury;
         lpRewardPool = _lpRewardPool;
+        unitToken    = _unitToken;
+        deadAddress  = 0x000000000000000000000000000000000000dEaD;
 
         buybackShare  = 6_000;
         lpShare       = 2_000;
@@ -121,10 +127,25 @@ contract FeeDistributor is
 
         // ── Interactions ──────────────────────────────────────────────────────
 
-        // 60% → UNIT buyback-and-burn via UnitFlow router
+        // 60% → UNIT buyback via UnitFlow V2.5 router,
+        // UNIT sent directly to dead address for burn.
+        // Uses SupportingFeeOnTransferTokens variant because UNIT is a
+        // deflationary/reflection token — the standard swap reverts on it.
+        address[] memory path = new address[](2);
+        path[0] = currency;   // USDC or EURC (fee input token)
+        path[1] = unitToken;  // UNIT token output
+
         // Use forceApprove (zero → set) to avoid allowance accumulation
         IERC20(currency).forceApprove(unitRouter, buybackAmount);
-        try IUnitFlowRouter(unitRouter).buybackAndBurn(currency, buybackAmount) {
+        try IUnitFlowV25Router(unitRouter)
+            .swapExactTokensForTokensSupportingFeeOnTransferTokens(
+                buybackAmount,
+                0,                    // amountOutMin: accept any amount
+                path,
+                deadAddress,          // UNIT goes straight to burn address
+                block.timestamp + 300 // 5-minute deadline
+            )
+        {
             // success — allowance consumed by router
         } catch (bytes memory reason) {
             // Router failed: reset allowance and redirect buyback share to treasury
@@ -192,6 +213,12 @@ contract FeeDistributor is
     /// @inheritdoc IFeeDistributor
     function isAuthorizedMarket(address market) external view returns (bool) {
         return authorizedMarkets[market];
+    }
+
+    /// @notice Updates the UNIT token address used for buyback routing
+    function updateUnitToken(address _unitToken) external onlyOwner {
+        require(_unitToken != address(0), "FeeDistributor: zero unitToken");
+        unitToken = _unitToken;
     }
 
     /// @inheritdoc IFeeDistributor

@@ -12,9 +12,10 @@ import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
  * Required environment variables (set in .env):
  *   DEPLOYER_PRIVATE_KEY   — deployer / proxy admin
  *   OWNER_ADDRESS          — Gnosis Safe 3-of-5 multisig (receives ownership)
- *   UNIT_ROUTER_ADDRESS    — UnitFlow DEX router for buyback-and-burn
+ *   UNIT_ROUTER_ADDRESS    — UnitFlow V2.5 router for UNIT buyback
  *   TREASURY_ADDRESS       — Protocol treasury multisig (20% fees)
  *   LP_REWARD_POOL_ADDRESS — LP reward pool contract (20% fees)
+ *   UNIT_TOKEN_ADDRESS     — UNIT token contract address on Arc
  *   USDC_ADDRESS           — USDC token on Arc
  *   EURC_ADDRESS           — EURC token on Arc
  *   ADMIN_RESOLVER_ADDRESS — Initial authorized resolver (admin wallet)
@@ -26,6 +27,7 @@ const PredictDeployModule = buildModule("PredictDeploy", (m) => {
   const unitRouter = m.getParameter("unitRouter", process.env.UNIT_ROUTER_ADDRESS ?? "");
   const treasury = m.getParameter("treasury", process.env.TREASURY_ADDRESS ?? "");
   const lpRewardPool = m.getParameter("lpRewardPool", process.env.LP_REWARD_POOL_ADDRESS ?? "");
+  const unitToken = m.getParameter("unitToken", process.env.UNIT_TOKEN_ADDRESS ?? "");
   const usdc = m.getParameter("usdc", process.env.USDC_ADDRESS ?? "");
   const eurc = m.getParameter("eurc", process.env.EURC_ADDRESS ?? "");
   const adminResolver = m.getParameter(
@@ -48,6 +50,7 @@ const PredictDeployModule = buildModule("PredictDeploy", (m) => {
         unitRouter,
         treasury,
         lpRewardPool,
+        unitToken,
         owner,
       ]),
     ],

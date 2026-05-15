@@ -5,15 +5,29 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "../interfaces/IUnitFlowRouter.sol";
 
-/// @dev Test-only router that accepts tokens and emits an event (simulates buyback)
-contract MockUnitFlowRouter is IUnitFlowRouter {
+/// @dev Test-only router that simulates the V2.5 swap by pulling the input
+///      token and emitting an event. Mirrors the real router's signature so
+///      FeeDistributor tests work without a live DEX.
+contract MockUnitFlowRouter is IUnitFlowV25Router {
     using SafeERC20 for IERC20;
 
-    event BuybackAndBurnCalled(address indexed token, uint256 amount);
+    event SwapExecuted(
+        address indexed tokenIn,
+        address indexed tokenOut,
+        uint256 amountIn,
+        address to
+    );
 
-    function buybackAndBurn(address token, uint256 amount) external override {
-        // Pull tokens from caller (FeeDistributor approves before calling)
-        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
-        emit BuybackAndBurnCalled(token, amount);
+    function swapExactTokensForTokensSupportingFeeOnTransferTokens(
+        uint256 amountIn,
+        uint256 /* amountOutMin */,
+        address[] calldata path,
+        address to,
+        uint256 /* deadline */
+    ) external override {
+        require(path.length >= 2, "MockRouter: invalid path");
+        // Pull input token from caller (FeeDistributor approves before calling)
+        IERC20(path[0]).safeTransferFrom(msg.sender, address(this), amountIn);
+        emit SwapExecuted(path[0], path[path.length - 1], amountIn, to);
     }
 }

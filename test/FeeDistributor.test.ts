@@ -7,7 +7,8 @@ async function deployFeeDistributor(
   owner: SignerWithAddress,
   routerAddr: string,
   treasuryAddr: string,
-  lpAddr: string
+  lpAddr: string,
+  unitTokenAddr: string
 ): Promise<FeeDistributor> {
   const Impl = await ethers.getContractFactory("FeeDistributor");
   const impl = await Impl.deploy();
@@ -19,6 +20,7 @@ async function deployFeeDistributor(
     routerAddr,
     treasuryAddr,
     lpAddr,
+    unitTokenAddr,
     owner.address,
   ]);
   const proxy = await Proxy.deploy(await impl.getAddress(), owner.address, initData);
@@ -48,11 +50,16 @@ describe("FeeDistributor", () => {
     const Router = await ethers.getContractFactory("MockUnitFlowRouter");
     router = (await Router.deploy()) as MockUnitFlowRouter;
 
+    // Deploy a mock token to stand in for UNIT (router pulls it in tests)
+    const UnitToken = await ethers.getContractFactory("MockERC20");
+    const unitToken = await UnitToken.deploy("Mock UNIT", "UNIT", 18);
+
     fd = await deployFeeDistributor(
       owner,
       await router.getAddress(),
       treasury.address,
-      lpRewardPool.address
+      lpRewardPool.address,
+      await unitToken.getAddress()
     );
 
     await fd.connect(owner).authorizeMarket(market.address);
@@ -117,11 +124,11 @@ describe("FeeDistributor", () => {
       expect(await usdc.balanceOf(lpRewardPool.address)).to.equal(lpBefore + lp);
     });
 
-    it("calls buybackAndBurn on router with correct amount", async () => {
+    it("calls swap on router with correct buyback amount", async () => {
       const buyback = (FEE * 6000n) / 10000n;
       await expect(fd.connect(stranger).distributeFees(await usdc.getAddress()))
-        .to.emit(router, "BuybackAndBurnCalled")
-        .withArgs(await usdc.getAddress(), buyback);
+        .to.emit(router, "SwapExecuted")
+        .withArgs(await usdc.getAddress(), await fd.unitToken(), buyback, await fd.deadAddress());
     });
 
     it("emits FeesDistributed", async () => {

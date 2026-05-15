@@ -15,7 +15,8 @@ async function deployFeeDistributor(
   owner: SignerWithAddress,
   router: string,
   treasury: string,
-  lp: string
+  lp: string,
+  unitToken: string
 ): Promise<FeeDistributor> {
   const Impl = await ethers.getContractFactory("FeeDistributor");
   const impl = await Impl.deploy();
@@ -26,6 +27,7 @@ async function deployFeeDistributor(
     router,
     treasury,
     lp,
+    unitToken,
     owner.address,
   ]);
   const proxy = await Proxy.deploy(await impl.getAddress(), owner.address, data);
@@ -99,11 +101,15 @@ describe("PredictMarketFactory", () => {
     const Router = await ethers.getContractFactory("MockUnitFlowRouter");
     const router = await Router.deploy();
 
+    const UnitToken = await ethers.getContractFactory("MockERC20");
+    const unitToken = await UnitToken.deploy("Mock UNIT", "UNIT", 18);
+
     fd = await deployFeeDistributor(
       owner,
       await router.getAddress(),
       treasury.address,
-      lp.address
+      lp.address,
+      await unitToken.getAddress()
     );
 
     // Use a random address as oracle stub (factory only stores the address)
