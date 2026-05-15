@@ -303,10 +303,13 @@ describe("FullFlow Integration", () => {
     expect(await s.fd.pendingFees(usdcAddr)).to.equal(0);
   });
 
-  it("router received buyback tokens (swap was executed)", async () => {
-    // Router holds the input tokens after the swap — verify its balance is non-zero
+  it("auto mode: router received buyback tokens and pendingBuyback stays zero", async () => {
+    // FeeDistributor was deployed with unitToken set (auto mode).
+    // The swap was executed during distributeFees — router holds the input tokens.
     const routerBal = await s.usdc.balanceOf(await s.router.getAddress());
     expect(routerBal).to.be.gt(0);
+    // pendingBuyback stays zero in auto mode
+    expect(await s.fd.getPendingBuyback(await s.usdc.getAddress())).to.equal(0);
   });
 
   // ─── 6. Post-resolution invariants ──────────────────────────────────────────

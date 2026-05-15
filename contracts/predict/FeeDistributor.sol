@@ -13,13 +13,19 @@ import "../interfaces/IFeeDistributor.sol";
 /// @notice Receives all protocol fees from PredictMarket instances and routes
 ///         them 60% buyback-and-burn / 20% LP rewards / 20% treasury.
 ///
+/// @dev Buyback modes:
+///   - Manual mode  (unitToken == address(0)): the buyback share accumulates in
+///     pendingBuyback[currency] and is NOT sent anywhere automatically.
+///     The owner calls executeBuyback() when UNIT is live on-chain.
+///   - Auto mode    (unitToken != address(0)): distributeFees() swaps the
+///     buyback share for UNIT via the V2.5 router and sends it to deadAddress.
+///     If the swap reverts the share falls back to treasury so fees are never lost.
+///
 /// @dev Security properties:
-///   - ReentrancyGuard on distributeFees
+///   - ReentrancyGuard on distributeFees and executeBuyback
 ///   - SafeERC20 on all token transfers
 ///   - forceApprove (zero then set) prevents allowance accumulation on router
-///   - try/catch on buybackAndBurn: if router reverts, buyback share falls back
-///     to treasury so fees are never lost
-///   - pendingFees zeroed before any external calls (CEI)
+///   - pendingFees / pendingBuyback zeroed before any external calls (CEI)
 ///   - Role changes emit events for off-chain monitoring
 contract FeeDistributor is
     Initializable,
@@ -46,6 +52,9 @@ contract FeeDistributor is
     uint256 public treasuryShare; // default 2000
 
     mapping(address => uint256) public pendingFees;
+    /// @notice Accumulated buyback share awaiting manual executeBuyback() call.
+    ///         Only non-zero when unitToken == address(0) (manual mode).
+    mapping(address => uint256) public pendingBuyback;
     mapping(address => bool)    public authorizedMarkets;
     mapping(address => bool)    public authorizedCallers;
 
@@ -54,6 +63,8 @@ contract FeeDistributor is
     event CallerRoleGranted(address indexed caller);
     event CallerRoleRevoked(address indexed caller);
     event BuybackFailed(address indexed currency, uint256 amount, bytes reason);
+    event BuybackExecuted(address indexed currency, uint256 amountIn, uint256 amountOutMin);
+    event UnitTokenUpdated(address indexed previous, address indexed next);
 
     // ─── Initializer ──────────────────────────────────────────────────────────
 
@@ -62,6 +73,8 @@ contract FeeDistributor is
         _disableInitializers();
     }
 
+    /// @param _unitToken Pass address(0) to start in manual buyback mode.
+    ///                   Call updateUnitToken() once UNIT is deployed on-chain.
     function initialize(
         address _unitRouter,
         address _treasury,
@@ -72,15 +85,15 @@ contract FeeDistributor is
         require(_unitRouter   != address(0), "FeeDistributor: zero unitRouter");
         require(_treasury     != address(0), "FeeDistributor: zero treasury");
         require(_lpRewardPool != address(0), "FeeDistributor: zero lpRewardPool");
-        require(_unitToken    != address(0), "FeeDistributor: zero unitToken");
         require(_owner        != address(0), "FeeDistributor: zero owner");
+        // _unitToken may be address(0) — that enables manual buyback mode
 
         __Ownable_init(_owner);
 
         unitRouter   = _unitRouter;
         treasury     = _treasury;
         lpRewardPool = _lpRewardPool;
-        unitToken    = _unitToken;
+        unitToken    = _unitToken;   // address(0) = manual mode
         deadAddress  = 0x000000000000000000000000000000000000dEaD;
 
         buybackShare  = 6_000;
@@ -112,8 +125,17 @@ contract FeeDistributor is
 
     /// @inheritdoc IFeeDistributor
     /// @dev Keeper-callable. CEI: zero pendingFees before any external calls.
-    ///      If the router's buybackAndBurn reverts, the buyback share is redirected
-    ///      to treasury so fees are never permanently locked.
+    ///
+    ///      Buyback behaviour depends on whether unitToken is set:
+    ///
+    ///      Manual mode (unitToken == address(0)):
+    ///        The buyback share is held in pendingBuyback[currency].
+    ///        No swap is attempted. Call executeBuyback() once UNIT is live.
+    ///
+    ///      Auto mode (unitToken != address(0)):
+    ///        The buyback share is swapped for UNIT via the V2.5 router and
+    ///        sent to deadAddress. If the swap reverts the share falls back to
+    ///        treasury so fees are never permanently locked.
     function distributeFees(address currency) external nonReentrant {
         uint256 total = pendingFees[currency];
         require(total > 0, "FeeDistributor: nothing to distribute");
@@ -127,32 +149,37 @@ contract FeeDistributor is
 
         // ── Interactions ──────────────────────────────────────────────────────
 
-        // 60% → UNIT buyback via UnitFlow V2.5 router,
-        // UNIT sent directly to dead address for burn.
-        // Uses SupportingFeeOnTransferTokens variant because UNIT is a
-        // deflationary/reflection token — the standard swap reverts on it.
-        address[] memory path = new address[](2);
-        path[0] = currency;   // USDC or EURC (fee input token)
-        path[1] = unitToken;  // UNIT token output
+        if (unitToken == address(0)) {
+            // ── Manual mode: park the buyback share for later execution ───────
+            pendingBuyback[currency] += buybackAmount;
+            buybackAmount = 0; // reported as 0 in the event; pendingBuyback tracks it
+        } else {
+            // ── Auto mode: swap for UNIT and send to dead address ─────────────
+            // Uses SupportingFeeOnTransferTokens because UNIT is a
+            // deflationary/reflection token — the standard swap reverts on it.
+            address[] memory path = new address[](2);
+            path[0] = currency;  // USDC or EURC (fee input token)
+            path[1] = unitToken; // UNIT token output
 
-        // Use forceApprove (zero → set) to avoid allowance accumulation
-        IERC20(currency).forceApprove(unitRouter, buybackAmount);
-        try IUnitFlowV25Router(unitRouter)
-            .swapExactTokensForTokensSupportingFeeOnTransferTokens(
-                buybackAmount,
-                0,                    // amountOutMin: accept any amount
-                path,
-                deadAddress,          // UNIT goes straight to burn address
-                block.timestamp + 300 // 5-minute deadline
-            )
-        {
-            // success — allowance consumed by router
-        } catch (bytes memory reason) {
-            // Router failed: reset allowance and redirect buyback share to treasury
-            IERC20(currency).forceApprove(unitRouter, 0);
-            treasuryAmount += buybackAmount;
-            buybackAmount   = 0;
-            emit BuybackFailed(currency, buybackAmount, reason);
+            // forceApprove (zero → set) prevents allowance accumulation
+            IERC20(currency).forceApprove(unitRouter, buybackAmount);
+            try IUnitFlowV25Router(unitRouter)
+                .swapExactTokensForTokensSupportingFeeOnTransferTokens(
+                    buybackAmount,
+                    0,                    // amountOutMin: accept any amount
+                    path,
+                    deadAddress,          // UNIT goes straight to burn address
+                    block.timestamp + 300 // 5-minute deadline
+                )
+            {
+                // success — allowance consumed by router
+            } catch (bytes memory reason) {
+                // Swap failed: reset allowance, redirect buyback share to treasury
+                IERC20(currency).forceApprove(unitRouter, 0);
+                treasuryAmount += buybackAmount;
+                buybackAmount   = 0;
+                emit BuybackFailed(currency, buybackAmount, reason);
+            }
         }
 
         // 20% → LP reward pool
@@ -160,12 +187,49 @@ contract FeeDistributor is
             IERC20(currency).safeTransfer(lpRewardPool, lpAmount);
         }
 
-        // 20% → treasury (+ any buyback fallback)
+        // 20% → treasury (+ any auto-mode swap fallback)
         if (treasuryAmount > 0) {
             IERC20(currency).safeTransfer(treasury, treasuryAmount);
         }
 
         emit FeesDistributed(currency, buybackAmount, lpAmount, treasuryAmount);
+    }
+
+    /// @notice Executes a manual UNIT buyback using accumulated pendingBuyback funds.
+    /// @dev    Only callable by owner. Requires unitToken to be set (auto mode).
+    ///         CEI: pendingBuyback zeroed before the swap call.
+    /// @param currency     The fee token to spend (USDC or EURC).
+    /// @param amountOutMin Minimum UNIT to receive — set via off-chain quote to
+    ///                     protect against sandwich attacks.
+    function executeBuyback(address currency, uint256 amountOutMin)
+        external
+        onlyOwner
+        nonReentrant
+    {
+        require(unitToken != address(0), "FeeDistributor: unitToken not set");
+
+        uint256 amount = pendingBuyback[currency];
+        require(amount > 0, "FeeDistributor: no pending buyback");
+
+        // ── Effects ───────────────────────────────────────────────────────────
+        pendingBuyback[currency] = 0;
+
+        // ── Interactions ──────────────────────────────────────────────────────
+        address[] memory path = new address[](2);
+        path[0] = currency;
+        path[1] = unitToken;
+
+        IERC20(currency).forceApprove(unitRouter, amount);
+        IUnitFlowV25Router(unitRouter)
+            .swapExactTokensForTokensSupportingFeeOnTransferTokens(
+                amount,
+                amountOutMin,
+                path,
+                deadAddress,
+                block.timestamp + 300
+            );
+
+        emit BuybackExecuted(currency, amount, amountOutMin);
     }
 
     /// @inheritdoc IFeeDistributor
@@ -210,14 +274,22 @@ contract FeeDistributor is
         return pendingFees[currency];
     }
 
+    /// @notice Returns the accumulated buyback share awaiting manual execution.
+    ///         Non-zero only in manual mode (unitToken == address(0)).
+    function getPendingBuyback(address currency) external view returns (uint256) {
+        return pendingBuyback[currency];
+    }
+
     /// @inheritdoc IFeeDistributor
     function isAuthorizedMarket(address market) external view returns (bool) {
         return authorizedMarkets[market];
     }
 
-    /// @notice Updates the UNIT token address used for buyback routing
+    /// @notice Sets the UNIT token address, switching between buyback modes.
+    ///         Pass address(0) to return to manual mode (pendingBuyback accumulates).
+    ///         Pass the live UNIT address to enable automatic swaps in distributeFees.
     function updateUnitToken(address _unitToken) external onlyOwner {
-        require(_unitToken != address(0), "FeeDistributor: zero unitToken");
+        emit UnitTokenUpdated(unitToken, _unitToken);
         unitToken = _unitToken;
     }
 

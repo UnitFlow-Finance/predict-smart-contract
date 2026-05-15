@@ -27,7 +27,11 @@ const PredictDeployModule = buildModule("PredictDeploy", (m) => {
   const unitRouter = m.getParameter("unitRouter", process.env.UNIT_ROUTER_ADDRESS ?? "");
   const treasury = m.getParameter("treasury", process.env.TREASURY_ADDRESS ?? "");
   const lpRewardPool = m.getParameter("lpRewardPool", process.env.LP_REWARD_POOL_ADDRESS ?? "");
-  const unitToken = m.getParameter("unitToken", process.env.UNIT_TOKEN_ADDRESS ?? "");
+  // address(0) = manual buyback mode (default until UNIT is deployed on-chain)
+  const unitToken = m.getParameter(
+    "unitToken",
+    process.env.UNIT_TOKEN_ADDRESS ?? "0x0000000000000000000000000000000000000000"
+  );
   const usdc = m.getParameter("usdc", process.env.USDC_ADDRESS ?? "");
   const eurc = m.getParameter("eurc", process.env.EURC_ADDRESS ?? "");
   const adminResolver = m.getParameter(
