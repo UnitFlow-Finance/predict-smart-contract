@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "../interfaces/IPredictOracle.sol";
 import "../interfaces/IPredictMarket.sol";
 
@@ -10,7 +11,19 @@ import "../interfaces/IPredictMarket.sol";
 /// @notice Modular resolution authority with a 24-hour dispute window.
 ///         Flow: proposeResolution → (optional) disputeResolution → finalizeResolution
 ///         Disputed resolutions require owner override via overrideResolution.
-contract PredictOracle is Initializable, OwnableUpgradeable, IPredictOracle {
+///
+/// @dev Security properties:
+///   - Pausable: owner can halt new proposals in an emergency
+///   - try/catch on resolveMarket: if the market call reverts, the resolution
+///     status is rolled back to Proposed so it can be retried or disputed
+///   - Resolver removal is immediate (no pending-removal delay needed at this stage)
+///   - All state changes emit events for off-chain monitoring
+contract PredictOracle is
+    Initializable,
+    OwnableUpgradeable,
+    PausableUpgradeable,
+    IPredictOracle
+{
     // ─── Constants ────────────────────────────────────────────────────────────
 
     uint256 public constant DISPUTE_WINDOW = 24 hours;
@@ -18,7 +31,11 @@ contract PredictOracle is Initializable, OwnableUpgradeable, IPredictOracle {
     // ─── State ────────────────────────────────────────────────────────────────
 
     mapping(address => Resolution) public resolutions;
-    mapping(address => bool) public authorizedResolvers;
+    mapping(address => bool)       public authorizedResolvers;
+
+    // ─── Additional events ────────────────────────────────────────────────────
+
+    event ResolutionCallFailed(address indexed market, bytes reason);
 
     // ─── Initializer ──────────────────────────────────────────────────────────
 
@@ -27,14 +44,16 @@ contract PredictOracle is Initializable, OwnableUpgradeable, IPredictOracle {
         _disableInitializers();
     }
 
-    /// @notice Initializes the oracle
-    /// @param _owner Protocol owner (Gnosis Safe)
     function initialize(address _owner) external initializer {
         require(_owner != address(0), "PredictOracle: zero owner");
         __Ownable_init(_owner);
+        __Pausable_init();
     }
 
-    // ─── External Functions ───────────────────────────────────────────────────
+    // ─── Admin ────────────────────────────────────────────────────────────────
+
+    function pause()   external onlyOwner { _pause(); }
+    function unpause() external onlyOwner { _unpause(); }
 
     /// @inheritdoc IPredictOracle
     function addResolver(address resolver) external onlyOwner {
@@ -49,9 +68,14 @@ contract PredictOracle is Initializable, OwnableUpgradeable, IPredictOracle {
         emit ResolverRemoved(resolver);
     }
 
+    // ─── Resolution Flow ──────────────────────────────────────────────────────
+
     /// @inheritdoc IPredictOracle
-    /// @dev Authorized resolvers or the owner may propose. Status must be None.
-    function proposeResolution(address market, bool outcome) external {
+    /// @dev New proposals blocked when paused.
+    function proposeResolution(address market, bool outcome)
+        external
+        whenNotPaused
+    {
         require(
             authorizedResolvers[msg.sender] || msg.sender == owner(),
             "PredictOracle: not authorized"
@@ -66,17 +90,16 @@ contract PredictOracle is Initializable, OwnableUpgradeable, IPredictOracle {
 
         resolutions[market] = Resolution({
             proposedOutcome: outcome,
-            proposedAt: block.timestamp,
-            proposedBy: msg.sender,
-            status: ResolutionStatus.Proposed,
-            disputedBy: address(0)
+            proposedAt:      block.timestamp,
+            proposedBy:      msg.sender,
+            status:          ResolutionStatus.Proposed,
+            disputedBy:      address(0)
         });
 
         emit ResolutionProposed(market, outcome, msg.sender, deadline);
     }
 
     /// @inheritdoc IPredictOracle
-    /// @dev Anyone can dispute within the 24-hour window.
     function disputeResolution(address market) external {
         Resolution storage res = resolutions[market];
         require(res.status == ResolutionStatus.Proposed, "PredictOracle: not proposed");
@@ -85,14 +108,15 @@ contract PredictOracle is Initializable, OwnableUpgradeable, IPredictOracle {
             "PredictOracle: dispute window closed"
         );
 
-        res.status = ResolutionStatus.Disputed;
+        res.status    = ResolutionStatus.Disputed;
         res.disputedBy = msg.sender;
 
         emit ResolutionDisputed(market, msg.sender);
     }
 
     /// @inheritdoc IPredictOracle
-    /// @dev Keeper-callable. Finalizes after the dispute window without a dispute.
+    /// @dev Keeper-callable. If resolveMarket reverts on the market contract,
+    ///      the resolution status is rolled back to Proposed so it can be retried.
     function finalizeResolution(address market) external {
         Resolution storage res = resolutions[market];
         require(res.status == ResolutionStatus.Proposed, "PredictOracle: not in proposed state");
@@ -101,11 +125,16 @@ contract PredictOracle is Initializable, OwnableUpgradeable, IPredictOracle {
             "PredictOracle: dispute window still open"
         );
 
+        // Optimistically set Finalized; roll back on failure
         res.status = ResolutionStatus.Finalized;
 
-        IPredictMarket(market).resolveMarket(res.proposedOutcome);
-
-        emit ResolutionFinalized(market, res.proposedOutcome);
+        try IPredictMarket(market).resolveMarket(res.proposedOutcome) {
+            emit ResolutionFinalized(market, res.proposedOutcome);
+        } catch (bytes memory reason) {
+            // Roll back so the resolution can be retried or overridden
+            res.status = ResolutionStatus.Proposed;
+            emit ResolutionCallFailed(market, reason);
+        }
     }
 
     /// @inheritdoc IPredictOracle
@@ -114,16 +143,19 @@ contract PredictOracle is Initializable, OwnableUpgradeable, IPredictOracle {
     }
 
     /// @inheritdoc IPredictOracle
-    /// @dev Owner-only. Resolves a disputed market with a definitive outcome.
+    /// @dev Owner-only override for disputed resolutions. Same rollback pattern.
     function overrideResolution(address market, bool outcome) external onlyOwner {
         Resolution storage res = resolutions[market];
         require(res.status == ResolutionStatus.Disputed, "PredictOracle: not disputed");
 
-        res.status = ResolutionStatus.Finalized;
+        res.status          = ResolutionStatus.Finalized;
         res.proposedOutcome = outcome;
 
-        IPredictMarket(market).resolveMarket(outcome);
-
-        emit ResolutionOverridden(market, outcome, msg.sender);
+        try IPredictMarket(market).resolveMarket(outcome) {
+            emit ResolutionOverridden(market, outcome, msg.sender);
+        } catch (bytes memory reason) {
+            res.status = ResolutionStatus.Disputed;
+            emit ResolutionCallFailed(market, reason);
+        }
     }
 }

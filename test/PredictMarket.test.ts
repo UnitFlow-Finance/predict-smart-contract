@@ -366,9 +366,16 @@ describe("PredictMarket", () => {
 
   describe("claimReward", () => {
     beforeEach(async () => {
-      // user1 stakes YES, user2 stakes NO
-      await ctx.market.connect(user1).stakeYes(u(200));
-      await ctx.market.connect(user2).stakeNo(u(100));
+      // Stake within pool cap (10% of 1000 USDC = 100 USDC)
+      const cap = await ctx.market.getMaxStake();
+      const yesAmt = cap;           // 100 USDC
+      const noAmt  = cap / 2n;      // 50 USDC (pool grows after YES stake)
+
+      await ctx.market.connect(user1).stakeYes(yesAmt);
+      // Recalculate cap after pool changed
+      const cap2 = await ctx.market.getMaxStake();
+      const noStake = noAmt < cap2 ? noAmt : cap2;
+      await ctx.market.connect(user2).stakeNo(noStake);
 
       await time.increaseTo(ctx.resolutionDate);
       await ctx.market.connect(ctx.resolver).resolveMarket(true); // YES wins
@@ -452,8 +459,10 @@ describe("PredictMarket", () => {
 
   describe("estimatePayout", () => {
     it("matches actual claimReward output", async () => {
-      await ctx.market.connect(user1).stakeYes(u(200));
-      await ctx.market.connect(user2).stakeNo(u(100));
+      const cap = await ctx.market.getMaxStake();
+      await ctx.market.connect(user1).stakeYes(cap);
+      const cap2 = await ctx.market.getMaxStake();
+      await ctx.market.connect(user2).stakeNo(cap2 / 2n);
 
       await time.increaseTo(ctx.resolutionDate);
       await ctx.market.connect(ctx.resolver).resolveMarket(true);
@@ -492,33 +501,51 @@ describe("PredictMarket", () => {
   // ─── AMM edge cases ──────────────────────────────────────────────────────────
 
   describe("AMM edge cases", () => {
-    it("large stake (>50% of pool) still issues shares and updates pool", async () => {
-      const bigStake = u(10_000); // 10x the pool
-      await ctx.usdc.mint(user1.address, bigStake);
+    it("stake at exactly pool cap (10%) issues shares and updates pool", async () => {
+      // Pool = 1000 USDC, 10% = 100 USDC
+      const maxStake = await ctx.market.getMaxStake();
+      await ctx.usdc.mint(user1.address, maxStake);
       await ctx.usdc.connect(user1).approve(await ctx.market.getAddress(), ethers.MaxUint256);
-      await expect(ctx.market.connect(user1).stakeYes(bigStake)).to.not.be.reverted;
+      await expect(ctx.market.connect(user1).stakeYes(maxStake)).to.not.be.reverted;
       const pos = await ctx.market.getUserPosition(user1.address);
       expect(pos.yesShares).to.be.gt(0);
     });
 
-    it("highly lopsided pool: NO stake still issues shares", async () => {
-      // Skew pool heavily toward YES
-      await ctx.usdc.mint(user1.address, u(50_000));
+    it("stake above pool cap reverts", async () => {
+      const maxStake = await ctx.market.getMaxStake();
+      const overCap = maxStake + 1n;
+      await ctx.usdc.mint(user1.address, overCap);
       await ctx.usdc.connect(user1).approve(await ctx.market.getAddress(), ethers.MaxUint256);
-      await ctx.market.connect(user1).stakeYes(u(50_000));
+      await expect(ctx.market.connect(user1).stakeYes(overCap)).to.be.revertedWith(
+        "PredictMarket: stake exceeds pool cap"
+      );
+    });
 
+    it("highly lopsided pool: NO stake still issues shares", async () => {
+      // Skew pool by staking at cap repeatedly
+      for (let i = 0; i < 5; i++) {
+        const maxStake = await ctx.market.getMaxStake();
+        await ctx.usdc.mint(user1.address, maxStake);
+        await ctx.usdc.connect(user1).approve(await ctx.market.getAddress(), ethers.MaxUint256);
+        await ctx.market.connect(user1).stakeYes(maxStake);
+      }
       // Now stake NO on lopsided pool
-      await expect(ctx.market.connect(user2).stakeNo(u(10))).to.not.be.reverted;
+      const maxStake = await ctx.market.getMaxStake();
+      const noStake = maxStake < u(10) ? maxStake : u(10);
+      await expect(ctx.market.connect(user2).stakeNo(noStake)).to.not.be.reverted;
       const pos = await ctx.market.getUserPosition(user2.address);
       expect(pos.noShares).to.be.gt(0);
     });
 
     it("multiple users stake and odds sum to 10000 after each stake", async () => {
-      for (const [usr, side, amt] of [
-        [user1, "yes", u(50)],
-        [user2, "no", u(200)],
-        [user3, "yes", u(75)],
-      ] as [SignerWithAddress, string, bigint][]) {
+      // Use 5% of pool each time to stay within the 10% cap
+      for (const [usr, side] of [
+        [user1, "yes"],
+        [user2, "no"],
+        [user3, "yes"],
+      ] as [SignerWithAddress, string][]) {
+        const poolTotal = (await ctx.market.yesPool()) + (await ctx.market.noPool());
+        const amt = (poolTotal * 500n) / 10000n; // 5% of pool
         if (side === "yes") await ctx.market.connect(usr).stakeYes(amt);
         else await ctx.market.connect(usr).stakeNo(amt);
 
@@ -526,6 +553,7 @@ describe("PredictMarket", () => {
         expect(yes + no).to.equal(10000);
       }
     });
+
   });
 
   // ─── Reentrancy simulation ────────────────────────────────────────────────────
@@ -553,9 +581,11 @@ describe("PredictMarket", () => {
       // Authorize attacker's market interactions via FeeDistributor
       await ctx.fd.connect(owner).authorizeMarket(await ctx.market.getAddress());
 
-      await ctx.usdc.mint(await attacker.getAddress(), u(100));
+      // Stake within pool cap (10% of 1000 USDC pool = 100 USDC)
+      const stakeAmt = await ctx.market.getMaxStake();
+      await ctx.usdc.mint(await attacker.getAddress(), stakeAmt);
       await attacker.approveMarket(await ctx.usdc.getAddress());
-      await attacker.stakeYes(u(100));
+      await attacker.stakeYes(stakeAmt);
 
       await time.increaseTo(ctx.resolutionDate);
       await ctx.market.connect(ctx.resolver).resolveMarket(true);

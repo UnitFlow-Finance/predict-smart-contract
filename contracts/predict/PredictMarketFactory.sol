@@ -225,14 +225,16 @@ contract PredictMarketFactory is
         view
         returns (bytes32)
     {
+        // block.timestamp intentionally excluded — nonce + question + creator
+        // provides sufficient uniqueness without validator-manipulable entropy
         return keccak256(
             abi.encodePacked(
                 params.question,
                 params.currency,
                 params.resolutionDate,
                 creator,
-                block.timestamp,
-                _marketNonce
+                _marketNonce,
+                block.chainid
             )
         );
     }

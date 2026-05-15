@@ -12,6 +12,15 @@ import "../interfaces/IFeeDistributor.sol";
 /// @title FeeDistributor
 /// @notice Receives all protocol fees from PredictMarket instances and routes
 ///         them 60% buyback-and-burn / 20% LP rewards / 20% treasury.
+///
+/// @dev Security properties:
+///   - ReentrancyGuard on distributeFees
+///   - SafeERC20 on all token transfers
+///   - forceApprove (zero then set) prevents allowance accumulation on router
+///   - try/catch on buybackAndBurn: if router reverts, buyback share falls back
+///     to treasury so fees are never lost
+///   - pendingFees zeroed before any external calls (CEI)
+///   - Role changes emit events for off-chain monitoring
 contract FeeDistributor is
     Initializable,
     OwnableUpgradeable,
@@ -30,15 +39,19 @@ contract FeeDistributor is
     address public treasury;
     address public lpRewardPool;
 
-    uint256 public buybackShare;   // default 6000
-    uint256 public lpShare;        // default 2000
-    uint256 public treasuryShare;  // default 2000
+    uint256 public buybackShare;  // default 6000
+    uint256 public lpShare;       // default 2000
+    uint256 public treasuryShare; // default 2000
 
     mapping(address => uint256) public pendingFees;
-    mapping(address => bool) public authorizedMarkets;
+    mapping(address => bool)    public authorizedMarkets;
+    mapping(address => bool)    public authorizedCallers;
 
-    /// @dev Addresses (e.g. the Factory) that may call authorizeMarket
-    mapping(address => bool) public authorizedCallers;
+    // ─── Events (additional to interface) ────────────────────────────────────
+
+    event CallerRoleGranted(address indexed caller);
+    event CallerRoleRevoked(address indexed caller);
+    event BuybackFailed(address indexed currency, uint256 amount, bytes reason);
 
     // ─── Initializer ──────────────────────────────────────────────────────────
 
@@ -47,30 +60,25 @@ contract FeeDistributor is
         _disableInitializers();
     }
 
-    /// @notice Initializes the contract
-    /// @param _unitRouter  UnitFlow router for UNIT buyback-and-burn
-    /// @param _treasury    Treasury multisig address (20%)
-    /// @param _lpRewardPool LP reward pool address (20%)
-    /// @param _owner       Protocol owner (Gnosis Safe)
     function initialize(
         address _unitRouter,
         address _treasury,
         address _lpRewardPool,
         address _owner
     ) external initializer {
-        require(_unitRouter != address(0), "FeeDistributor: zero unitRouter");
-        require(_treasury != address(0), "FeeDistributor: zero treasury");
+        require(_unitRouter   != address(0), "FeeDistributor: zero unitRouter");
+        require(_treasury     != address(0), "FeeDistributor: zero treasury");
         require(_lpRewardPool != address(0), "FeeDistributor: zero lpRewardPool");
-        require(_owner != address(0), "FeeDistributor: zero owner");
+        require(_owner        != address(0), "FeeDistributor: zero owner");
 
         __Ownable_init(_owner);
 
-        unitRouter = _unitRouter;
-        treasury = _treasury;
+        unitRouter   = _unitRouter;
+        treasury     = _treasury;
         lpRewardPool = _lpRewardPool;
 
-        buybackShare = 6_000;
-        lpShare = 2_000;
+        buybackShare  = 6_000;
+        lpShare       = 2_000;
         treasuryShare = 2_000;
     }
 
@@ -87,12 +95,9 @@ contract FeeDistributor is
     // ─── External Functions ───────────────────────────────────────────────────
 
     /// @inheritdoc IFeeDistributor
-    /// @dev Caller must have already transferred `amount` tokens to this contract
-    ///      before calling (or this contract must be the recipient of a safeTransfer).
-    ///      Markets call this after transferring fees via SafeERC20.
     function receiveFee(address currency, uint256 amount) external onlyAuthorized {
         require(currency != address(0), "FeeDistributor: zero currency");
-        require(amount > 0, "FeeDistributor: zero amount");
+        require(amount > 0,             "FeeDistributor: zero amount");
 
         pendingFees[currency] += amount;
 
@@ -100,33 +105,49 @@ contract FeeDistributor is
     }
 
     /// @inheritdoc IFeeDistributor
-    /// @dev Keeper-callable. Distributes all pending fees for `currency`.
+    /// @dev Keeper-callable. CEI: zero pendingFees before any external calls.
+    ///      If the router's buybackAndBurn reverts, the buyback share is redirected
+    ///      to treasury so fees are never permanently locked.
     function distributeFees(address currency) external nonReentrant {
         uint256 total = pendingFees[currency];
         require(total > 0, "FeeDistributor: nothing to distribute");
 
+        // ── Effects (zero before interactions) ────────────────────────────────
         pendingFees[currency] = 0;
 
-        uint256 buybackAmount = (total * buybackShare) / BASIS_POINTS;
-        uint256 lpAmount = (total * lpShare) / BASIS_POINTS;
-        // Assign remainder to treasury to avoid dust from integer division
+        uint256 buybackAmount  = (total * buybackShare)  / BASIS_POINTS;
+        uint256 lpAmount       = (total * lpShare)       / BASIS_POINTS;
         uint256 treasuryAmount = total - buybackAmount - lpAmount;
 
+        // ── Interactions ──────────────────────────────────────────────────────
+
         // 60% → UNIT buyback-and-burn via UnitFlow router
-        IERC20(currency).safeIncreaseAllowance(unitRouter, buybackAmount);
-        IUnitFlowRouter(unitRouter).buybackAndBurn(currency, buybackAmount);
+        // Use forceApprove (zero → set) to avoid allowance accumulation
+        IERC20(currency).forceApprove(unitRouter, buybackAmount);
+        try IUnitFlowRouter(unitRouter).buybackAndBurn(currency, buybackAmount) {
+            // success — allowance consumed by router
+        } catch (bytes memory reason) {
+            // Router failed: reset allowance and redirect buyback share to treasury
+            IERC20(currency).forceApprove(unitRouter, 0);
+            treasuryAmount += buybackAmount;
+            buybackAmount   = 0;
+            emit BuybackFailed(currency, buybackAmount, reason);
+        }
 
         // 20% → LP reward pool
-        IERC20(currency).safeTransfer(lpRewardPool, lpAmount);
+        if (lpAmount > 0) {
+            IERC20(currency).safeTransfer(lpRewardPool, lpAmount);
+        }
 
-        // 20% → treasury
-        IERC20(currency).safeTransfer(treasury, treasuryAmount);
+        // 20% → treasury (+ any buyback fallback)
+        if (treasuryAmount > 0) {
+            IERC20(currency).safeTransfer(treasury, treasuryAmount);
+        }
 
         emit FeesDistributed(currency, buybackAmount, lpAmount, treasuryAmount);
     }
 
     /// @inheritdoc IFeeDistributor
-    /// @dev Callable by owner or any address granted via grantCallerRole
     function authorizeMarket(address market) external {
         require(
             msg.sender == owner() || authorizedCallers[msg.sender],
@@ -141,11 +162,13 @@ contract FeeDistributor is
     function grantCallerRole(address caller) external onlyOwner {
         require(caller != address(0), "FeeDistributor: zero caller");
         authorizedCallers[caller] = true;
+        emit CallerRoleGranted(caller);
     }
 
     /// @notice Revokes caller role
     function revokeCallerRole(address caller) external onlyOwner {
         authorizedCallers[caller] = false;
+        emit CallerRoleRevoked(caller);
     }
 
     /// @inheritdoc IFeeDistributor
@@ -155,8 +178,8 @@ contract FeeDistributor is
         uint256 _treasury
     ) external onlyOwner {
         require(_buyback + _lp + _treasury == BASIS_POINTS, "FeeDistributor: split != 10000");
-        buybackShare = _buyback;
-        lpShare = _lp;
+        buybackShare  = _buyback;
+        lpShare       = _lp;
         treasuryShare = _treasury;
         emit SplitUpdated(_buyback, _lp, _treasury);
     }
@@ -177,12 +200,12 @@ contract FeeDistributor is
         address _treasury,
         address _lpRewardPool
     ) external onlyOwner {
-        require(_unitRouter != address(0), "FeeDistributor: zero unitRouter");
-        require(_treasury != address(0), "FeeDistributor: zero treasury");
+        require(_unitRouter   != address(0), "FeeDistributor: zero unitRouter");
+        require(_treasury     != address(0), "FeeDistributor: zero treasury");
         require(_lpRewardPool != address(0), "FeeDistributor: zero lpRewardPool");
 
-        unitRouter = _unitRouter;
-        treasury = _treasury;
+        unitRouter   = _unitRouter;
+        treasury     = _treasury;
         lpRewardPool = _lpRewardPool;
 
         emit AddressesUpdated(_unitRouter, _treasury, _lpRewardPool);

@@ -1,0 +1,25 @@
+{
+  "network": "arcTestnet",
+  "chainId": 5042002,
+  "deployer": "0x3682652cD0995E6972CCF7245a1CAea95C2955b8",
+  "timestamp": "2026-05-15T00:00:03.500Z",
+  "tokens": {
+    "USDC": "0x3600000000000000000000000000000000000000",
+    "EURC": "0x89b50855aa3be2f677cd6303cec089b5f319d72a"
+  },
+  "contracts": {
+    "MockUnitFlowRouter": "0x285562e96B281791270090Ead5239b9747fe9197",
+    "FeeDistributor": {
+      "proxy": "0x0d0425413284ebB4023913ef78Eb207241d3b2eC",
+      "impl": "0x7b528bC0AF9Cd45F3C37982987E99ADD43B9a49E"
+    },
+    "PredictOracle": {
+      "proxy": "0xc40E6653D3a76FAA8F3F68060f1D09AEB5153A15",
+      "impl": "0xbdB7FD8E6FB1a0F3976E46B49C2c92BC532450F1"
+    },
+    "PredictMarketFactory": {
+      "proxy": "0x7Ec112983011db79f907285daBc759643A9D8304",
+      "impl": "0x2EA73225038E9D8b9767B722425c1d69dB8EB748"
+    }
+  }
+}

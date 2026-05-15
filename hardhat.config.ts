@@ -7,7 +7,7 @@ import "dotenv/config";
 
 const DEPLOYER_PRIVATE_KEY =
   process.env.DEPLOYER_PRIVATE_KEY ||
-  "DEPLOYER_PRIVATE_KEY_PLACEHOLDER"; // hardhat default
+  "DEPLOYER_PRIVATE_KEY_PLACEHOLDER";
 
 const config: HardhatUserConfig = {
   solidity: {
@@ -38,9 +38,10 @@ const config: HardhatUserConfig = {
     },
     arcTestnet: {
       url: process.env.ARC_TESTNET_RPC || "https://rpc.testnet.arc.network",
-      chainId: 1516,
+      chainId: 5042002,
       accounts: [DEPLOYER_PRIVATE_KEY],
-      gasPrice: "auto",
+      gasPrice: 20_002_000_000, // 20 gwei — matches observed network gas price
+      timeout: 120000,
     },
   },
   etherscan: {
@@ -50,7 +51,7 @@ const config: HardhatUserConfig = {
     customChains: [
       {
         network: "arcTestnet",
-        chainId: 1516,
+        chainId: 5042002,
         urls: {
           apiURL: "https://testnet.arcscan.app/api",
           browserURL: "https://testnet.arcscan.app",
@@ -61,12 +62,11 @@ const config: HardhatUserConfig = {
   gasReporter: {
     enabled: process.env.REPORT_GAS === "true",
     currency: "USD",
-    token: "USDC",
   },
   paths: {
     sources: "./contracts",
-    tests: "./test",
-    cache: "./cache",
+    tests:   "./test",
+    cache:   "./cache",
     artifacts: "./artifacts",
   },
   mocha: {
