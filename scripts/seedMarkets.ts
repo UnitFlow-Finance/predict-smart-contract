@@ -45,19 +45,16 @@ interface MarketSpec {
   noPool: bigint;
 }
 
-// Resolution dates as Unix timestamps (UTC midnight)
-const JUN_18_2025  = 1750204800; // 2025-06-18
-const JUL_01_2025  = 1751328000; // 2025-07-01
-const SEP_30_2025  = 1759190400; // 2025-09-30
-const MAY_31_2025  = 1748649600; // 2025-05-31
-const JUN_30_2025  = 1751241600; // 2025-06-30
-const JUN_06_2025  = 1749168000; // 2025-06-06
-const SEP_01_2025  = 1756684800; // 2025-09-01
-const DEC_31_2025  = 1767139200; // 2025-12-31
-const JUL_31_2025  = 1753920000; // 2025-07-31
-const DEC_31_2026  = 1798675200; // 2026-12-31
+// Resolution dates — all in the future relative to 2026-05-15
+const D30  = 1781440028; // 2026-06-14
+const D60  = 1784032028; // 2026-07-14
+const D90  = 1786624028; // 2026-08-13
+const D120 = 1789216028; // 2026-09-12
+const D180 = 1794400028; // 2026-11-11
+const D365 = 1810384028; // 2027-05-15
+const D545 = 1825936028; // 2027-11-11
 
-const TOTAL = u(10_000); // 10,000 USDC/EURC per market
+const TOTAL = u(50); // 50 USDC/EURC per market (deployer has limited testnet balance)
 
 /**
  * Builds a MarketSpec from a target YES probability (0–100 integer percent).
@@ -90,112 +87,112 @@ function spec(
 
 const MARKETS: MarketSpec[] = [
   spec(
-    "Will the Fed cut rates at the June 2025 FOMC meeting?",
-    "Federal Reserve rate decision at the June 17-18 2025 FOMC meeting.",
+    "Will the Fed cut rates at the next FOMC meeting?",
+    "Federal Reserve cuts the federal funds rate target at its next scheduled FOMC meeting.",
     "Macro",
     ["fed", "rates", "fomc", "macro"],
     USDC,
-    JUN_18_2025,
-    58 // P(YES) = 58% → noPool=5800, yesPool=4200
+    D30,
+    58
   ),
   spec(
-    "Will ETH reach $5,000 before July 1, 2025?",
-    "Ethereum spot price exceeds $5,000 USD at any point before July 1 2025.",
+    "Will ETH reach $5,000 before August 2026?",
+    "Ethereum spot price exceeds $5,000 USD at any point before August 1 2026.",
     "Crypto",
     ["eth", "ethereum", "price"],
     USDC,
-    JUL_01_2025,
-    34 // P(YES) = 34% → noPool=3400, yesPool=6600
+    D60,
+    34
   ),
   spec(
-    "Will the EU pass the AI Governance Act by Q3 2025?",
-    "European Union formally adopts AI Governance Act legislation before October 1 2025.",
+    "Will the EU pass the AI Governance Act by Q4 2026?",
+    "European Union formally adopts AI Governance Act legislation before January 1 2027.",
     "Governance",
     ["eu", "ai", "regulation", "governance"],
     EURC,
-    SEP_30_2025,
-    71 // P(YES) = 71% → noPool=7100, yesPool=2900
+    D180,
+    71
   ),
   spec(
-    "Will OPEC+ announce a production cut in May 2025?",
-    "OPEC+ officially announces an oil production cut during May 2025.",
+    "Will OPEC+ announce a production cut in Q3 2026?",
+    "OPEC+ officially announces an oil production cut during Q3 2026 (July–September).",
     "Energy",
     ["opec", "oil", "energy", "macro"],
     USDC,
-    MAY_31_2025,
-    44 // P(YES) = 44% → noPool=4400, yesPool=5600
+    D90,
+    44
   ),
   spec(
-    "Will Bitcoin dominance exceed 60% by June 2025?",
-    "Bitcoin market cap dominance exceeds 60% at any point before June 30 2025.",
+    "Will Bitcoin dominance exceed 60% by July 2026?",
+    "Bitcoin market cap dominance exceeds 60% at any point before July 14 2026.",
     "Crypto",
     ["bitcoin", "btc", "dominance"],
     USDC,
-    JUN_30_2025,
-    52 // P(YES) = 52% → noPool=5200, yesPool=4800
+    D60,
+    52
   ),
   spec(
-    "Will US unemployment exceed 4.5% in May 2025?",
-    "US Bureau of Labor Statistics reports unemployment rate above 4.5% for May 2025.",
+    "Will US unemployment exceed 4.5% in 2026?",
+    "US Bureau of Labor Statistics reports unemployment rate above 4.5% for any month in 2026.",
     "Macro",
     ["unemployment", "us", "macro", "labor"],
     USDC,
-    JUN_06_2025,
-    29 // P(YES) = 29% → noPool=2900, yesPool=7100
+    D120,
+    29
   ),
   spec(
-    "Will Arc mainnet launch before September 2025?",
-    "Circle's Arc blockchain mainnet goes live before September 1 2025.",
+    "Will Arc mainnet launch before September 2026?",
+    "Circle's Arc blockchain mainnet goes live before September 1 2026.",
     "Crypto",
     ["arc", "circle", "mainnet", "l1"],
     USDC,
-    SEP_01_2025,
-    67 // P(YES) = 67% → noPool=6700, yesPool=3300
+    D90,
+    67
   ),
   spec(
-    "Will the US pass stablecoin legislation by end of 2025?",
-    "US Congress passes and President signs stablecoin-specific legislation before January 1 2026.",
+    "Will the US pass stablecoin legislation by end of 2026?",
+    "US Congress passes and President signs stablecoin-specific legislation before January 1 2027.",
     "Governance",
     ["stablecoin", "us", "legislation", "regulation"],
     USDC,
-    DEC_31_2025,
-    76 // P(YES) = 76% → noPool=7600, yesPool=2400
+    D180,
+    76
   ),
   spec(
-    "Will gold hit $3,500/oz by June 2025?",
-    "Spot gold price exceeds $3,500 per troy ounce before June 30 2025.",
+    "Will gold hit $4,000/oz by September 2026?",
+    "Spot gold price exceeds $4,000 per troy ounce before September 12 2026.",
     "Macro",
     ["gold", "commodities", "macro"],
     USDC,
-    JUN_30_2025,
-    41 // P(YES) = 41% → noPool=4100, yesPool=5900
+    D120,
+    41
   ),
   spec(
-    "Will Circle complete its IPO before Q4 2025?",
-    "Circle Internet Financial completes its IPO and begins trading before October 1 2025.",
+    "Will Circle complete its IPO by Q1 2027?",
+    "Circle Internet Financial completes its IPO and begins trading before April 1 2027.",
     "Crypto",
     ["circle", "ipo", "usdc"],
     USDC,
-    SEP_30_2025,
-    83 // P(YES) = 83% → noPool=8300, yesPool=1700
+    D365,
+    83
   ),
   spec(
-    "Will EURUSD exceed 1.15 by July 2025?",
-    "EUR/USD exchange rate exceeds 1.15 at any point before July 31 2025.",
+    "Will EURUSD exceed 1.15 by August 2026?",
+    "EUR/USD exchange rate exceeds 1.15 at any point before August 13 2026.",
     "FX",
     ["eurusd", "fx", "euro", "dollar"],
     EURC,
-    JUL_31_2025,
-    38 // P(YES) = 38% → noPool=3800, yesPool=6200
+    D90,
+    38
   ),
   spec(
-    "Will a G7 country adopt a CBDC by 2026?",
-    "A G7 member nation officially launches a retail CBDC before January 1 2027.",
+    "Will a G7 country adopt a CBDC by 2027?",
+    "A G7 member nation officially launches a retail CBDC before January 1 2028.",
     "Governance",
     ["cbdc", "g7", "central-bank", "governance"],
     EURC,
-    DEC_31_2026,
-    55 // P(YES) = 55% → noPool=5500, yesPool=4500
+    D545,
+    55
   ),
 ];
 
