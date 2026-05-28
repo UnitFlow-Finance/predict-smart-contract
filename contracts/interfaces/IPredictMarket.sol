@@ -46,6 +46,8 @@ interface IPredictMarket {
     );
     event MarketResolved(bool outcome, address indexed resolver);
     event LiquiditySeeded(uint256 yesPool, uint256 noPool);
+    /// @notice Emitted when a staker recovers funds from a zero-winner market
+    event EmergencyWithdraw(address indexed user, uint256 amount);
 
     // ─── Functions ────────────────────────────────────────────────────────────
 
@@ -87,6 +89,9 @@ interface IPredictMarket {
         external
         view
         returns (uint256 gross, uint256 net, uint256 fee);
+
+    /// @notice Recovers a staker's funds when the resolved outcome has zero winning shares
+    function emergencyWithdraw() external;
 
     /// @notice Emergency pause — kills staking (factory only)
     function emergencyPause() external;

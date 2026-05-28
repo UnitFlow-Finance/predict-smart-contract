@@ -225,7 +225,8 @@ describe("FullFlow Integration", () => {
   });
 
   it("dispute window is open immediately after proposal", async () => {
-    // Should not revert — window is still open
+    // Grant noUsers[0] disputer role, then dispute
+    await s.oracle.connect(s.owner).addDisputer(s.noUsers[0].address);
     await expect(
       s.oracle.connect(s.noUsers[0]).disputeResolution(await s.market.getAddress())
     ).to.not.be.reverted;
@@ -292,7 +293,7 @@ describe("FullFlow Integration", () => {
     const treasuryBefore = await s.usdc.balanceOf(s.treasury.address);
     const lpBefore = await s.usdc.balanceOf(s.lpPool.address);
 
-    await s.fd.connect(s.owner).distributeFees(usdcAddr);
+    await s.fd.connect(s.owner).distributeFees(usdcAddr, 0);
 
     const buyback = (total * 6000n) / BASIS;
     const lp = (total * 2000n) / BASIS;

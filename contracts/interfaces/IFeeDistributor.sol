@@ -25,8 +25,10 @@ interface IFeeDistributor {
     function receiveFee(address currency, uint256 amount) external;
 
     /// @notice Distributes accumulated fees for a given currency (60/20/20)
-    /// @param currency The ERC-20 token address to distribute
-    function distributeFees(address currency) external;
+    /// @param currency      The ERC-20 token address to distribute
+    /// @param minBuybackOut Minimum UNIT out from the buyback swap (auto mode).
+    ///                      Pass 0 to skip slippage protection (not recommended).
+    function distributeFees(address currency, uint256 minBuybackOut) external;
 
     /// @notice Authorizes a market contract to call receiveFee
     /// @param market The market contract address

@@ -622,4 +622,76 @@ describe("PredictMarket", () => {
       expect(participants).to.include(user2.address);
     });
   });
+
+  // ─── emergencyWithdraw ────────────────────────────────────────────────────────
+
+  describe("emergencyWithdraw", () => {
+    it("reverts when market has winners (normal case)", async () => {
+      // user1 stakes YES, user2 stakes NO — both sides have shares
+      await ctx.market.connect(user1).stakeYes(u(10));
+      await ctx.market.connect(user2).stakeNo(u(10));
+      await time.increaseTo(ctx.resolutionDate);
+      await ctx.market.connect(ctx.resolver).resolveMarket(true); // YES wins
+
+      // user2 lost but cannot use emergencyWithdraw — winners exist
+      await expect(
+        ctx.market.connect(user2).emergencyWithdraw()
+      ).to.be.revertedWith("PredictMarket: market has winners, use claimReward");
+    });
+
+    it("reverts before resolution", async () => {
+      await ctx.market.connect(user1).stakeYes(u(10));
+      await expect(
+        ctx.market.connect(user1).emergencyWithdraw()
+      ).to.be.revertedWith("PredictMarket: not resolved");
+    });
+
+    it("allows staker to recover funds when winning side has zero shares (M-1 fix)", async () => {
+      // Only YES stakers — nobody staked NO. Resolve NO wins → totalNoShares == 0.
+      await ctx.market.connect(user1).stakeYes(u(100));
+      await ctx.market.connect(user2).stakeYes(u(50));
+      await time.increaseTo(ctx.resolutionDate);
+      await ctx.market.connect(ctx.resolver).resolveMarket(false); // NO wins, but nobody staked NO
+
+      const staked1 = (await ctx.market.getUserPosition(user1.address)).totalStaked;
+      const balBefore = await ctx.usdc.balanceOf(user1.address);
+      await ctx.market.connect(user1).emergencyWithdraw();
+      const balAfter = await ctx.usdc.balanceOf(user1.address);
+
+      expect(balAfter - balBefore).to.equal(staked1);
+    });
+
+    it("reverts on double emergencyWithdraw", async () => {
+      await ctx.market.connect(user1).stakeYes(u(100));
+      await time.increaseTo(ctx.resolutionDate);
+      await ctx.market.connect(ctx.resolver).resolveMarket(false);
+
+      await ctx.market.connect(user1).emergencyWithdraw();
+      await expect(
+        ctx.market.connect(user1).emergencyWithdraw()
+      ).to.be.revertedWith("PredictMarket: already claimed");
+    });
+
+    it("reverts for address with no stake", async () => {
+      await ctx.market.connect(user1).stakeYes(u(100));
+      await time.increaseTo(ctx.resolutionDate);
+      await ctx.market.connect(ctx.resolver).resolveMarket(false);
+
+      // user2 never staked
+      await expect(
+        ctx.market.connect(user2).emergencyWithdraw()
+      ).to.be.revertedWith("PredictMarket: no stake to recover");
+    });
+
+    it("emits EmergencyWithdraw event", async () => {
+      await ctx.market.connect(user1).stakeYes(u(100));
+      await time.increaseTo(ctx.resolutionDate);
+      await ctx.market.connect(ctx.resolver).resolveMarket(false);
+
+      const staked = (await ctx.market.getUserPosition(user1.address)).totalStaked;
+      await expect(ctx.market.connect(user1).emergencyWithdraw())
+        .to.emit(ctx.market, "EmergencyWithdraw")
+        .withArgs(user1.address, staked);
+    });
+  });
 });

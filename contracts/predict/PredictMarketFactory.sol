@@ -105,9 +105,11 @@ contract PredictMarketFactory is
         uint256 totalRequired = marketCreationFee + params.initialLiquidity;
         currency.safeTransferFrom(msg.sender, address(this), totalRequired);
 
-        // Route creation fee to distributor
-        currency.safeTransfer(feeDistributor, marketCreationFee);
-        IFeeDistributor(feeDistributor).receiveFee(params.currency, marketCreationFee);
+        // Route creation fee to distributor (skip if fee is zero to avoid revert)
+        if (marketCreationFee > 0) {
+            currency.safeTransfer(feeDistributor, marketCreationFee);
+            IFeeDistributor(feeDistributor).receiveFee(params.currency, marketCreationFee);
+        }
 
         // Derive deterministic marketId and CREATE2 salt
         bytes32 marketId = _computeMarketId(params, msg.sender);
@@ -217,7 +219,9 @@ contract PredictMarketFactory is
                 bytes(params.question).length <= MAX_QUESTION_LENGTH,
             "Factory: invalid question length"
         );
-        require(params.resolver != address(0), "Factory: zero resolver");
+        // Resolver must be the oracle contract — prevents arbitrary EOA resolvers
+        // that would bypass the 24-hour dispute window and allow direct fund drain.
+        require(params.resolver == oracle, "Factory: resolver must be oracle");
     }
 
     function _computeMarketId(MarketParams calldata params, address creator)

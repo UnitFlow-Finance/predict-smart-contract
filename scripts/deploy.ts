@@ -71,7 +71,9 @@ async function main() {
   console.log(`  MockUnitFlowRouter: ${routerAddr}`);
 
   // ── 2. FeeDistributor ────────────────────────────────────────────────────
-  const fd = await deployProxy("FeeDistributor", [routerAddr, TREASURY, LP_POOL, OWNER], deployer);
+  // initialize(router, treasury, lpRewardPool, unitToken, owner)
+  // unitToken = address(0) → manual buyback mode until UNIT is live on Arc
+  const fd = await deployProxy("FeeDistributor", [routerAddr, TREASURY, LP_POOL, ethers.ZeroAddress, OWNER], deployer);
 
   // ── 3. PredictOracle ─────────────────────────────────────────────────────
   const oracle = await deployProxy("PredictOracle", [OWNER], deployer);

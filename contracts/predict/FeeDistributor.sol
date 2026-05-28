@@ -136,7 +136,13 @@ contract FeeDistributor is
     ///        The buyback share is swapped for UNIT via the V2.5 router and
     ///        sent to deadAddress. If the swap reverts the share falls back to
     ///        treasury so fees are never permanently locked.
-    function distributeFees(address currency) external nonReentrant {
+    ///
+    /// @param currency       The ERC-20 fee token to distribute (USDC or EURC).
+    /// @param minBuybackOut  Minimum UNIT to receive from the buyback swap (auto
+    ///                       mode only). Pass 0 to skip slippage protection, but
+    ///                       callers should supply an off-chain quote to prevent
+    ///                       sandwich attacks.
+    function distributeFees(address currency, uint256 minBuybackOut) external nonReentrant {
         uint256 total = pendingFees[currency];
         require(total > 0, "FeeDistributor: nothing to distribute");
 
@@ -166,7 +172,7 @@ contract FeeDistributor is
             try IUnitFlowV25Router(unitRouter)
                 .swapExactTokensForTokensSupportingFeeOnTransferTokens(
                     buybackAmount,
-                    0,                    // amountOutMin: accept any amount
+                    minBuybackOut,        // caller-supplied slippage protection
                     path,
                     deadAddress,          // UNIT goes straight to burn address
                     block.timestamp + 300 // 5-minute deadline
@@ -174,11 +180,12 @@ contract FeeDistributor is
             {
                 // success — allowance consumed by router
             } catch (bytes memory reason) {
-                // Swap failed: reset allowance, redirect buyback share to treasury
+                // Swap failed: reset allowance, redirect buyback share to treasury.
+                // Capture amount before zeroing so the event reports the real value.
                 IERC20(currency).forceApprove(unitRouter, 0);
+                emit BuybackFailed(currency, buybackAmount, reason);
                 treasuryAmount += buybackAmount;
                 buybackAmount   = 0;
-                emit BuybackFailed(currency, buybackAmount, reason);
             }
         }
 

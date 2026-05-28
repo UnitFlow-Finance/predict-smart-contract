@@ -32,10 +32,15 @@ contract PredictOracle is
 
     mapping(address => Resolution) public resolutions;
     mapping(address => bool)       public authorizedResolvers;
+    /// @notice Addresses permitted to dispute resolutions.
+    ///         Prevents costless griefing by anonymous actors.
+    mapping(address => bool)       public authorizedDisputers;
 
     // ─── Additional events ────────────────────────────────────────────────────
 
     event ResolutionCallFailed(address indexed market, bytes reason);
+    event DisputerAdded(address indexed disputer);
+    event DisputerRemoved(address indexed disputer);
 
     // ─── Initializer ──────────────────────────────────────────────────────────
 
@@ -66,6 +71,19 @@ contract PredictOracle is
     function removeResolver(address resolver) external onlyOwner {
         authorizedResolvers[resolver] = false;
         emit ResolverRemoved(resolver);
+    }
+
+    /// @notice Grants an address permission to dispute resolutions.
+    function addDisputer(address disputer) external onlyOwner {
+        require(disputer != address(0), "PredictOracle: zero disputer");
+        authorizedDisputers[disputer] = true;
+        emit DisputerAdded(disputer);
+    }
+
+    /// @notice Revokes dispute permission from an address.
+    function removeDisputer(address disputer) external onlyOwner {
+        authorizedDisputers[disputer] = false;
+        emit DisputerRemoved(disputer);
     }
 
     // ─── Resolution Flow ──────────────────────────────────────────────────────
@@ -100,7 +118,14 @@ contract PredictOracle is
     }
 
     /// @inheritdoc IPredictOracle
+    /// @dev Only authorized disputers or the owner can dispute. This prevents
+    ///      costless griefing by anonymous actors that would force owner
+    ///      intervention on every market resolution.
     function disputeResolution(address market) external {
+        require(
+            authorizedDisputers[msg.sender] || msg.sender == owner(),
+            "PredictOracle: not authorized to dispute"
+        );
         Resolution storage res = resolutions[market];
         require(res.status == ResolutionStatus.Proposed, "PredictOracle: not proposed");
         require(
@@ -108,7 +133,7 @@ contract PredictOracle is
             "PredictOracle: dispute window closed"
         );
 
-        res.status    = ResolutionStatus.Disputed;
+        res.status     = ResolutionStatus.Disputed;
         res.disputedBy = msg.sender;
 
         emit ResolutionDisputed(market, msg.sender);

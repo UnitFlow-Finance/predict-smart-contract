@@ -323,6 +323,32 @@ contract PredictMarket is ReentrancyGuard, Pausable, IPredictMarket {
         emit Claimed(msg.sender, winningShares, netPayout, claimFee);
     }
 
+    // ─── Emergency Withdrawal ─────────────────────────────────────────────────
+
+    /// @notice Allows a staker to recover their stake when the market resolves
+    ///         to an outcome with zero winning shares (nobody staked on the
+    ///         winning side). Without this, all funds would be permanently locked.
+    /// @dev    Only callable after resolution. Refunds `totalStaked` for the
+    ///         caller's position (gross amount, no fee deducted — the protocol
+    ///         fee was already taken at stake time). Strict CEI ordering.
+    function emergencyWithdraw() external nonReentrant isResolved {
+        uint256 totalWinningShares = outcome ? totalYesShares : totalNoShares;
+        require(totalWinningShares == 0, "PredictMarket: market has winners, use claimReward");
+
+        UserPosition storage pos = _positions[msg.sender];
+        require(!pos.claimed, "PredictMarket: already claimed");
+        require(pos.totalStaked > 0, "PredictMarket: no stake to recover");
+
+        // Effects before interactions
+        uint256 refund = pos.totalStaked;
+        pos.claimed = true;
+
+        // Interactions
+        IERC20(_marketInfo.currency).safeTransfer(msg.sender, refund);
+
+        emit EmergencyWithdraw(msg.sender, refund);
+    }
+
     // ─── View Functions ───────────────────────────────────────────────────────
 
     /// @inheritdoc IPredictMarket

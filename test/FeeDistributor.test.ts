@@ -58,6 +58,11 @@ describe("FeeDistributor", () => {
     await fd.connect(market).receiveFee(await usdc.getAddress(), amount);
   }
 
+  // Helper: distribute with zero minBuybackOut (acceptable in tests; real callers should supply a quote)
+  async function distribute(fd: FeeDistributor, caller = stranger) {
+    return fd.connect(caller).distributeFees(await usdc.getAddress(), 0);
+  }
+
   beforeEach(async () => {
     [owner, market, stranger, treasury, lpRewardPool] = await ethers.getSigners();
 
@@ -124,7 +129,7 @@ describe("FeeDistributor", () => {
       const treasuryBefore = await usdc.balanceOf(treasury.address);
       const lpBefore       = await usdc.balanceOf(lpRewardPool.address);
 
-      await fd.connect(stranger).distributeFees(await usdc.getAddress());
+      await fd.connect(stranger).distributeFees(await usdc.getAddress(), 0);
 
       const buyback = (FEE * 6000n) / 10000n;
       const lp      = (FEE * 2000n) / 10000n;
@@ -136,7 +141,7 @@ describe("FeeDistributor", () => {
 
     it("calls swap on router with correct buyback amount", async () => {
       const buyback = (FEE * 6000n) / 10000n;
-      await expect(fd.connect(stranger).distributeFees(await usdc.getAddress()))
+      await expect(fd.connect(stranger).distributeFees(await usdc.getAddress(), 0))
         .to.emit(router, "SwapExecuted")
         .withArgs(await usdc.getAddress(), await fd.unitToken(), buyback, await fd.deadAddress());
     });
@@ -145,25 +150,25 @@ describe("FeeDistributor", () => {
       const buyback = (FEE * 6000n) / 10000n;
       const lp      = (FEE * 2000n) / 10000n;
       const treas   = FEE - buyback - lp;
-      await expect(fd.connect(stranger).distributeFees(await usdc.getAddress()))
+      await expect(fd.connect(stranger).distributeFees(await usdc.getAddress(), 0))
         .to.emit(fd, "FeesDistributed")
         .withArgs(await usdc.getAddress(), buyback, lp, treas);
     });
 
     it("resets pendingFees to zero", async () => {
-      await fd.connect(stranger).distributeFees(await usdc.getAddress());
+      await fd.connect(stranger).distributeFees(await usdc.getAddress(), 0);
       expect(await fd.pendingFees(await usdc.getAddress())).to.equal(0);
     });
 
     it("does NOT accumulate pendingBuyback in auto mode", async () => {
-      await fd.connect(stranger).distributeFees(await usdc.getAddress());
+      await fd.connect(stranger).distributeFees(await usdc.getAddress(), 0);
       expect(await fd.getPendingBuyback(await usdc.getAddress())).to.equal(0);
     });
 
     it("reverts when nothing to distribute", async () => {
-      await fd.connect(stranger).distributeFees(await usdc.getAddress());
+      await fd.connect(stranger).distributeFees(await usdc.getAddress(), 0);
       await expect(
-        fd.connect(stranger).distributeFees(await usdc.getAddress())
+        fd.connect(stranger).distributeFees(await usdc.getAddress(), 0)
       ).to.be.revertedWith("FeeDistributor: nothing to distribute");
     });
   });
@@ -178,12 +183,12 @@ describe("FeeDistributor", () => {
     });
 
     it("does NOT call the router", async () => {
-      await expect(fd.connect(stranger).distributeFees(await usdc.getAddress()))
+      await expect(fd.connect(stranger).distributeFees(await usdc.getAddress(), 0))
         .to.not.emit(router, "SwapExecuted");
     });
 
     it("accumulates buyback share in pendingBuyback", async () => {
-      await fd.connect(stranger).distributeFees(await usdc.getAddress());
+      await fd.connect(stranger).distributeFees(await usdc.getAddress(), 0);
       const expected = (FEE * 6000n) / 10000n;
       expect(await fd.getPendingBuyback(await usdc.getAddress())).to.equal(expected);
     });
@@ -192,7 +197,7 @@ describe("FeeDistributor", () => {
       const treasuryBefore = await usdc.balanceOf(treasury.address);
       const lpBefore       = await usdc.balanceOf(lpRewardPool.address);
 
-      await fd.connect(stranger).distributeFees(await usdc.getAddress());
+      await fd.connect(stranger).distributeFees(await usdc.getAddress(), 0);
 
       const buyback = (FEE * 6000n) / 10000n;
       const lp      = (FEE * 2000n) / 10000n;
@@ -205,15 +210,15 @@ describe("FeeDistributor", () => {
     it("emits FeesDistributed with buybackAmount = 0", async () => {
       const lp    = (FEE * 2000n) / 10000n;
       const treas = FEE - (FEE * 6000n) / 10000n - lp;
-      await expect(fd.connect(stranger).distributeFees(await usdc.getAddress()))
+      await expect(fd.connect(stranger).distributeFees(await usdc.getAddress(), 0))
         .to.emit(fd, "FeesDistributed")
         .withArgs(await usdc.getAddress(), 0n, lp, treas);
     });
 
     it("accumulates pendingBuyback across multiple distributions", async () => {
-      await fd.connect(stranger).distributeFees(await usdc.getAddress());
+      await fd.connect(stranger).distributeFees(await usdc.getAddress(), 0);
       await seedFee(fd, FEE);
-      await fd.connect(stranger).distributeFees(await usdc.getAddress());
+      await fd.connect(stranger).distributeFees(await usdc.getAddress(), 0);
       const expected = ((FEE * 6000n) / 10000n) * 2n;
       expect(await fd.getPendingBuyback(await usdc.getAddress())).to.equal(expected);
     });
@@ -228,7 +233,7 @@ describe("FeeDistributor", () => {
     beforeEach(async () => {
       fd = await setupFd(false); // manual mode
       await seedFee(fd);
-      await fd.connect(stranger).distributeFees(await usdc.getAddress());
+      await fd.connect(stranger).distributeFees(await usdc.getAddress(), 0);
       // pendingBuyback[usdc] == BUYBACK now
     });
 
@@ -276,7 +281,7 @@ describe("FeeDistributor", () => {
     it("full lifecycle: manual → set unitToken → executeBuyback → auto mode", async () => {
       // Accumulate a second round in manual mode
       await seedFee(fd, FEE);
-      await fd.connect(stranger).distributeFees(await usdc.getAddress());
+      await fd.connect(stranger).distributeFees(await usdc.getAddress(), 0);
       expect(await fd.getPendingBuyback(await usdc.getAddress())).to.equal(BUYBACK * 2n);
 
       // Owner sets unitToken (UNIT is now live)
@@ -288,7 +293,7 @@ describe("FeeDistributor", () => {
 
       // Future distributions now auto-swap — no pendingBuyback accumulation
       await seedFee(fd, FEE);
-      await fd.connect(stranger).distributeFees(await usdc.getAddress());
+      await fd.connect(stranger).distributeFees(await usdc.getAddress(), 0);
       expect(await fd.getPendingBuyback(await usdc.getAddress())).to.equal(0);
     });
   });

@@ -39,6 +39,7 @@ describe("PredictOracle", () => {
     [owner, resolver, disputer, stranger] = await ethers.getSigners();
     oracle = await deployOracle(owner);
     await oracle.connect(owner).addResolver(resolver.address);
+    await oracle.connect(owner).addDisputer(disputer.address);
     marketAddr = await deployMarketStub(await oracle.getAddress());
   });
 
@@ -120,11 +121,17 @@ describe("PredictOracle", () => {
       await oracle.connect(resolver).proposeResolution(marketAddr, true);
     });
 
-    it("anyone can dispute within window", async () => {
+    it("authorized disputer can dispute within window", async () => {
       await oracle.connect(disputer).disputeResolution(marketAddr);
       const res = await oracle.resolutions(marketAddr);
       expect(res.status).to.equal(2); // Disputed
       expect(res.disputedBy).to.equal(disputer.address);
+    });
+
+    it("unauthorized address cannot dispute", async () => {
+      await expect(
+        oracle.connect(stranger).disputeResolution(marketAddr)
+      ).to.be.revertedWith("PredictOracle: not authorized to dispute");
     });
 
     it("emits ResolutionDisputed", async () => {
@@ -135,8 +142,9 @@ describe("PredictOracle", () => {
 
     it("reverts if not in Proposed state", async () => {
       await oracle.connect(disputer).disputeResolution(marketAddr);
+      // Status is now Disputed — even an authorized disputer cannot dispute again
       await expect(
-        oracle.connect(stranger).disputeResolution(marketAddr)
+        oracle.connect(disputer).disputeResolution(marketAddr)
       ).to.be.revertedWith("PredictOracle: not proposed");
     });
 

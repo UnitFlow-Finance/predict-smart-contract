@@ -84,7 +84,7 @@ describe("PredictMarketFactory", () => {
       tags: ["eth", "price"],
       currency: usdc.target as string,
       resolutionDate,
-      resolver: resolver.address,
+      resolver: oracleAddr, // must equal factory.oracle per H-1 fix
       oracleSource: "manual",
       initialLiquidity: INIT_LIQ,
       ...overrides,
@@ -198,6 +198,13 @@ describe("PredictMarketFactory", () => {
       expect(await market.yesPool()).to.equal(INIT_LIQ - INIT_LIQ / 2n);
       expect(await market.noPool()).to.equal(INIT_LIQ / 2n);
       expect(await market.seeded()).to.be.true;
+    });
+
+    it("rejects arbitrary resolver (H-1 fix: resolver must be oracle)", async () => {
+      const arbitraryResolver = ethers.Wallet.createRandom().address;
+      await expect(
+        factory.connect(creator).createMarket(defaultParams({ resolver: arbitraryResolver }))
+      ).to.be.revertedWith("Factory: resolver must be oracle");
     });
 
     it("rejects unsupported currency", async () => {
